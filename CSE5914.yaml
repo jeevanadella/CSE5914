@@ -1,0 +1,374 @@
+openapi: 3.1.0
+jsonSchemaDialect: "https://spec.openapis.org/oas/3.1/dialect/base"
+info:
+  title: CS Paper Search & RAG API (arXiv + OpenAlex)
+  version: 0.3.0
+  description: |
+    Frontend ↔ Backend API for a CS-only paper search and RAG chat using arXiv + OpenAlex.
+    AWS target: API Gateway + Lambda + {RDS Postgres|DynamoDB} + OpenSearch + S3.
+    Goal: professional, grounded answers with strict citation control.
+
+servers:
+  - url: https://api.example.com/v1
+    description: Production (AWS)
+  - url: https://staging-api.example.com/v1
+    description: Staging
+
+tags:
+  - name: Health
+  - name: Sources
+  - name: Papers
+  - name: Chat
+  - name: Ingestion
+
+paths:
+  /healthz:
+    get:
+      tags: [Health]
+      summary: Health check
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+                  uptimeSec: { type: number, example: 12345 }
+
+  /sources:
+    get:
+      tags: [Sources]
+      summary: List fixed data sources (arxiv, openalex)
+      responses:
+        '200':
+          description: Sources
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sources:
+                    type: array
+                    items: { $ref: '#/components/schemas/Source' }
+                example:
+                  sources: ["openalex","arxiv"]
+
+  /papers/search:
+    get:
+      tags: [Papers]
+      summary: Search CS papers (title/abstract/keywords) in arXiv + OpenAlex
+      description: |
+        OpenSearch-backed search over CS-only corpus from arXiv & OpenAlex.
+        Server enforces Computer Science domain (e.g., arXiv cs.*; OpenAlex CS concepts).
+      parameters:
+        - in: query
+          name: q
+          schema: { type: string }
+          example: '"retrieval augmented generation" OR "contrastive learning"'
+        - in: query
+          name: source
+          description: Limit to one source if desired
+          schema: { $ref: '#/components/schemas/Source' }
+        - in: query
+          name: fromYear
+          schema: { type: integer, minimum: 1900 }
+        - in: query
+          name: toYear
+          schema: { type: integer, minimum: 1900 }
+        - in: query
+          name: venue
+          schema: { type: string, example: NeurIPS }
+        - in: query
+          name: author
+          schema: { type: string, example: "Geoffrey Hinton" }
+        - in: query
+          name: minCitationCount
+          schema: { type: integer, minimum: 0, default: 0 }
+        - in: query
+          name: sort
+          schema:
+            type: string
+            enum: [relevance, year_desc, citations_desc]
+            default: relevance
+        - in: query
+          name: page
+          schema: { type: integer, minimum: 1, default: 1 }
+        - in: query
+          name: pageSize
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      responses:
+        '200':
+          description: Search results
+          headers:
+            X-Total-Count:
+              description: Total hits
+              schema: { type: integer }
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  results:
+                    type: array
+                    items: { $ref: '#/components/schemas/Paper' }
+                  page: { type: integer }
+                  pageSize: { type: integer }
+                  total: { type: integer }
+
+  /papers/{paperId}:
+    get:
+      tags: [Papers]
+      summary: Get one paper by internal ID
+      parameters:
+        - in: path
+          name: paperId
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Paper
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PaperFull' }
+        '404':
+          description: Not found
+
+  /papers/batch:
+    post:
+      tags: [Papers]
+      summary: Batch fetch papers by IDs
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ids]
+              properties:
+                ids:
+                  type: array
+                  minItems: 1
+                  maxItems: 100
+                  items: { type: string }
+      responses:
+        '200':
+          description: Papers
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/PaperFull' }
+
+  /chat/qa:
+    post:
+      tags: [Chat]
+      summary: Grounded CS chat over arXiv + OpenAlex (RAG)
+      description: |
+        Performs retrieval (OpenSearch vector + keyword) restricted to CS corpus, then answers.
+        To minimize hallucinations, set groundedOnly=true and requireCitations=true.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [question]
+              properties:
+                question:
+                  type: string
+                  example: "What are the main limitations of retrieval-augmented generation in CS literature?"
+                restrictPaperIds:
+                  type: array
+                  description: "Optional: limit context to selected paper IDs"
+                  items:
+                    type: string
+                topK:
+                  type: integer
+                  minimum: 1
+                  maximum: 20
+                  default: 8
+                groundedOnly:
+                  type: boolean
+                  description: >
+                    If true, answer must be fully supported by retrieved citations; otherwise respond
+                    with 'insufficient_evidence'.
+                  default: true
+                requireCitations:
+                  type: boolean
+                  description: "If true, include inline citations and per-chunk sources."
+                  default: true
+                minCitationCount:
+                  type: integer
+                  description: "Prefer higher-quality papers (OpenAlex citation count threshold)."
+                  default: 0
+                answerPolicy:
+                  type: string
+                  description: "Controls refusal style when insufficient evidence."
+                  enum: [insufficient_evidence, partial_with_warnings, refuse]
+                  default: insufficient_evidence
+
+      responses:
+        '200':
+          description: Answer with citations and confidence
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  answer: { type: string }
+                  confidence:
+                    type: number
+                    description: "Model-estimated confidence [0,1]"
+                    example: 0.73
+                  citations:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Citation'
+                  usedPapers:
+                    type: array
+                    items: { $ref: '#/components/schemas/Paper' }
+                  policyTriggered:
+                    type: boolean
+                    description: "True if the answer was constrained/refused by grounded policy."
+                    example: false
+
+  /ingestion/jobs:
+    post:
+      tags: [Ingestion]
+      summary: Start ingestion/sync job (CS-only) from arXiv or OpenAlex
+      description: |
+        Triggers a Step Functions/Lambda pipeline to fetch metadata & PDFs (if OA),
+        normalize to RDS/DynamoDB, and index into OpenSearch (dense + sparse).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [source]
+              properties:
+                source: { $ref: '#/components/schemas/Source' }
+                fromYear: { type: integer }
+                toYear: { type: integer }
+                venue: { type: string }
+                dryRun: { type: boolean, default: false }
+      responses:
+        '202':
+          description: Job accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  jobId: { type: string }
+                  status: { type: string, example: queued }
+
+  /ingestion/jobs/{jobId}:
+    get:
+      tags: [Ingestion]
+      summary: Get ingestion job status
+      parameters:
+        - in: path
+          name: jobId
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Job status
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IngestionJob' }
+
+components:
+  schemas:
+    Source:
+      type: string
+      enum: [openalex, arxiv]
+
+    Author:
+      type: object
+      properties:
+        name: { type: string }
+        orcid: { type: [string, "null"] }
+        affiliation: { type: [string, "null"] }
+
+    Paper:
+      type: object
+      properties:
+        id: { type: string, description: "Internal ID" }
+        sourceId: { type: string, description: "openalex:W... or arxiv:YYMM.NNNNN" }
+        source: { $ref: '#/components/schemas/Source' }
+        title: { type: string }
+        year: { type: integer }
+        venue: { type: [string, "null"] }
+        authors:
+          type: array
+          items: { $ref: '#/components/schemas/Author' }
+        citationCount: { type: integer }
+        topics:
+          type: array
+          items: { type: string }
+        url: { type: string, format: uri }
+        codeLinks:
+          type: array
+          items: { type: string, format: uri }
+
+    PaperFull:
+      allOf:
+        - $ref: '#/components/schemas/Paper'
+        - type: object
+          properties:
+            abstract: { type: string }
+            pdfUrl:
+              type: [string, "null"]
+              format: uri
+            datasetLinks:
+              type: array
+              items: { type: string, format: uri }
+            methods:
+              type: array
+              items: { type: string }
+            tasks:
+              type: array
+              items: { type: string }
+
+    Citation:
+      type: object
+      properties:
+        paperId: { type: string }
+        source: { $ref: '#/components/schemas/Source' }
+        passage: { type: string, description: "The supporting text snippet" }
+        score: { type: number }
+
+    IngestionJob:
+      type: object
+      properties:
+        jobId: { type: string }
+        source: { $ref: '#/components/schemas/Source' }
+        status:
+          type: string
+          enum: [queued, running, succeeded, failed]
+        fromYear:
+          type: [integer, "null"]
+        toYear:
+          type: [integer, "null"]
+        venue:
+          type: [string, "null"]
+        totals:
+          type: object
+          properties:
+            fetched: { type: integer }
+            indexed: { type: integer }
+        error:
+          type: [string, "null"]
+        startedAt:
+          type: [string, "null"]
+          format: date-time
+        finishedAt:
+          type: [string, "null"]
+          format: date-time
