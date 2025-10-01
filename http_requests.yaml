@@ -19,7 +19,7 @@ tags:
     description: Perform RAG-based Q&A on papers and code.
 
 paths:
-  /healthz:
+  /health:
     get:
       tags: [Health]
       summary: Health check
