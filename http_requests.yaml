@@ -1,0 +1,314 @@
+openapi: 3.0.4
+info:
+  title: Research Paper Analysis API
+  version: 1.0.0
+  description: |
+    An API for a platform that allows users to search, analyze, and compare multiple research papers and their codebases. 
+    It integrates with OpenAlex, arXiv, and GitHub, using LLMs for advanced querying and analysis.
+
+tags:
+  - name: Health
+    description: API Health Status
+  - name: Discovery
+    description: Search for papers in external sources like arXiv and OpenAlex.
+  - name: Papers
+    description: Manage papers that have been imported into the system.
+  - name: Users
+    description: Manage users who curate papers and run analysis.
+  - name: Chat
+    description: Perform RAG-based Q&A on papers and code.
+
+paths:
+  /healthz:
+    get:
+      tags: [Health]
+      summary: Health check
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+
+  /discovery/search:
+    get:
+      tags: [Discovery]
+      summary: Search external sources for papers
+      description: Queries external APIs like OpenAlex and arXiv to find papers not yet in the system.
+      parameters:
+        - in: query
+          name: q
+          required: true
+          schema: { type: string }
+          example: '"contrastive learning"'
+        - in: query
+          name: source
+          schema:
+            type: string
+            enum: [openalex, arxiv]
+      responses:
+        '200':
+          description: A list of discovered papers.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/DiscoveredPaper' }
+
+  /papers/import:
+    post:
+      tags: [Papers]
+      summary: Import papers from external sources
+      description: Triggers an asynchronous ingestion job for one or more papers found via the discovery endpoint.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                papers:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      source: { type: string, enum: [openalex, arxiv] }
+                      externalId: { type: string }
+      responses:
+        '202':
+          description: Import job accepted.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  jobId: { type: string }
+                  status: { type: string, example: "queued" }
+
+  /papers/upload:
+    post:
+      tags: [Papers]
+      summary: Upload a PDF for ingestion
+      description: Ingests a paper directly from a PDF file for cases where it cannot be found in external sources.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        '202':
+          description: Ingestion job accepted.
+
+  /papers/{paperId}:
+    get:
+      tags: [Papers]
+      summary: Get paper details
+      parameters:
+        - in: path
+          name: paperId
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Full details of the paper.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PaperFull' }
+
+  /users:
+    post:
+      tags: [Users]
+      summary: Create a new user
+      description: Registers a new user in the system.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, email]
+              properties:
+                name:
+                  type: string
+                  example: "Alice Chen"
+                email:
+                  type: string
+                  format: email
+                  example: "alice@example.com"
+      responses:
+        '201':
+          description: User created successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+
+    get:
+      tags: [Users]
+      summary: List all users
+      description: Retrieve all registered users.
+      responses:
+        '200':
+          description: A list of users.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/User'
+
+  /users/{userId}:
+    get:
+      tags: [Users]
+      summary: Get user by ID
+      parameters:
+        - in: path
+          name: userId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The user details.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+
+    delete:
+      tags: [Users]
+      summary: Delete a user
+      description: Deletes a user and all associated data (papers, chat history, etc.).
+      parameters:
+        - in: path
+          name: userId
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: User deleted successfully.
+
+  /users/{userId}/papers:
+    put:
+      tags: [Users]
+      summary: Add or remove papers for a user
+      parameters:
+        - in: path
+          name: userId
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                paperIds:
+                  type: array
+                  items: { type: string }
+      responses:
+        '200':
+          description: User's paper list updated.
+
+  /chat/qa:
+    post:
+      tags: [Chat]
+      summary: Chat over papers and code
+      description: Performs RAG Q&A, optionally scoped to a specific user's selected papers.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [question]
+              properties:
+                question:
+                  type: string
+                  example: "How does the code handle data augmentation?"
+                userId:
+                  type: string
+                  description: "Optional: Scope the chat to a specific user's papers."
+                searchCode:
+                  type: boolean
+                  description: "If true, also search linked codebases."
+                  default: false
+      responses:
+        '200':
+          description: Answer with citations.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QAResponse' }
+
+components:
+  schemas:
+    DiscoveredPaper:
+      type: object
+      properties:
+        source: { type: string, enum: [openalex, arxiv] }
+        externalId: { type: string }
+        title: { type: string }
+        authors: { type: array, items: { type: string } }
+        year: { type: integer }
+        abstract: { type: string }
+
+    Paper:
+      type: object
+      properties:
+        id: { type: string }
+        title: { type: string }
+        authors: { type: array, items: { type: string } }
+        year: { type: integer }
+        citationCount: { type: integer }
+        codeLinks: { type: array, items: { type: string, format: uri } }
+
+    PaperFull:
+      allOf:
+        - $ref: '#/components/schemas/Paper'
+        - type: object
+          properties:
+            abstract: { type: string }
+            ingestionStatus: { type: string, enum: [queued, processing, completed, failed] }
+
+    User:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        email: { type: string, format: email }
+        paperIds:
+          type: array
+          items: { type: string }
+        createdAt: { type: string, format: date-time }
+
+    PaperCitation:
+      type: object
+      properties:
+        paperId: { type: string }
+        passage: { type: string }
+
+    CodeCitation:
+      type: object
+      properties:
+        paperId: { type: string }
+        filePath: { type: string }
+        snippet: { type: string }
+
+    QAResponse:
+      type: object
+      properties:
+        answer: { type: string }
+        citations:
+          type: array
+          items:
+            oneOf:
+              - $ref: '#/components/schemas/PaperCitation'
+              - $ref: '#/components/schemas/CodeCitation'
