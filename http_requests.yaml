@@ -17,6 +17,8 @@ tags:
     description: Manage users who curate papers and run analysis.
   - name: Chat
     description: Perform RAG-based Q&A on papers and code.
+  - name: Code
+    description: Manage codebases linked to papers.
 
 paths:
   /health:
@@ -120,6 +122,228 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/PaperFull' }
+
+  /papers/{paperId}/code:
+    post:
+      tags: [Code]
+      summary: Link a codebase to a paper
+      description: Links a GitHub repository to a specific paper for analysis.
+      parameters:
+        - in: path
+          name: paperId
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                repositoryUrl:
+                  type: string
+                  format: uri
+                  example: "https://github.com/facebookresearch/llama"
+      responses:
+        '202':
+          description: Codebase linking job accepted.
+
+    get:
+      tags: [Code]
+      summary: Get linked codebase details
+      description: Retrieves the file structure and other metadata of the codebase linked to a paper.
+      parameters:
+        - in: path
+          name: paperId
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Details of the linked codebase.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Codebase' }
+  
+  /papers/{paperId}/code-links:
+    get:
+      tags: [Code]
+      summary: Find GitHub links in a paper
+      description: Scans the full text of an ingested paper to find and extract any mentioned GitHub repository links.
+      parameters:
+        - in: path
+          name: paperId
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: A list of GitHub links found in the paper.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  links:
+                    type: array
+                    items:
+                      type: string
+                      format: uri
+                      example: "https://github.com/facebookresearch/llama"
+
+  /papers/{paperId}/code/content:
+    get:
+      tags: [Code]
+      summary: Get file content from a codebase
+      description: Retrieves the content of a specific file from the linked repository.
+      parameters:
+        - in: path
+          name: paperId
+          required: true
+          schema: { type: string }
+        - in: query
+          name: filePath
+          required: true
+          schema: { type: string }
+          example: "README.md"
+      responses:
+        '200':
+          description: The content of the file.
+          content:
+            text/plain:
+              schema:
+                type: string
+
+  /papers/{paperId}/code/dependencies:
+    get:
+      tags: [Code]
+      summary: Get dependency analysis of the codebase
+      description: Parses dependency files like requirements.txt or package.json to identify project dependencies.
+      parameters:
+        - in: path
+          name: paperId
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: A list of dependencies.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  dependencies:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name: { type: string }
+                        version: { type: string }
+
+  /papers/{paperId}/code/search:
+    get:
+      tags: [Code]
+      summary: Keyword search within the codebase
+      description: Performs a keyword search over the code in the linked repository.
+      parameters:
+        - in: path
+          name: paperId
+          required: true
+          schema: { type: string }
+        - in: query
+          name: q
+          required: true
+          schema: { type: string }
+          example: "augmentation"
+      responses:
+        '200':
+          description: A list of relevant code snippets matching the keyword.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/CodeCitation' }
+
+  /papers/{paperId}/code/commits:
+    get:
+      tags: [Code]
+      summary: Get commit history
+      description: Retrieves the commit history for a specific file or the entire repository.
+      parameters:
+        - in: path
+          name: paperId
+          required: true
+          schema: { type: string }
+        - in: query
+          name: filePath
+          schema: { type: string }
+          description: "Optional: Specify a file path to get its commit history."
+      responses:
+        '200':
+          description: A list of commits.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    sha: { type: string }
+                    message: { type: string }
+                    author: { type: string }
+                    date: { type: string, format: date-time }
+
+  /papers/{paperId}/code/metrics:
+    get:
+      tags: [Code]
+      summary: Get code complexity metrics
+      description: Calculates complexity metrics for a specific file (e.g., cyclomatic complexity).
+      parameters:
+        - in: path
+          name: paperId
+          required: true
+          schema: { type: string }
+        - in: query
+          name: filePath
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Code complexity metrics.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  cyclomaticComplexity: { type: integer }
+                  linesOfCode: { type: integer }
+
+  /papers/{paperId}/code/structure:
+    get:
+      tags: [Code]
+      summary: Get code structure
+      description: Lists all functions and classes within a given file.
+      parameters:
+        - in: path
+          name: paperId
+          required: true
+          schema: { type: string }
+        - in: query
+          name: filePath
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: A list of functions and classes.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  functions:
+                    type: array
+                    items: { type: string }
+                  classes:
+                    type: array
+                    items: { type: string }
 
   /users:
     post:
@@ -268,7 +492,7 @@ components:
         authors: { type: array, items: { type: string } }
         year: { type: integer }
         citationCount: { type: integer }
-        codeLinks: { type: array, items: { type: string, format: uri } }
+        codebase: { $ref: '#/components/schemas/CodebaseInfo' }
 
     PaperFull:
       allOf:
@@ -312,3 +536,37 @@ components:
             oneOf:
               - $ref: '#/components/schemas/PaperCitation'
               - $ref: '#/components/schemas/CodeCitation'
+
+    CodebaseInfo:
+      type: object
+      properties:
+        repositoryUrl:
+          type: string
+          format: uri
+        isLinked:
+          type: boolean
+          default: false
+
+    Codebase:
+      allOf:
+        - $ref: '#/components/schemas/CodebaseInfo'
+        - type: object
+          properties:
+            fileTree:
+              type: array
+              items:
+                $ref: '#/components/schemas/FileNode'
+            lastSyncedAt:
+              type: string
+              format: date-time
+
+    FileNode:
+      type: object
+      properties:
+        name: { type: string }
+        path: { type: string }
+        type: { type: string, enum: [file, directory] }
+        children:
+          type: array
+          items:
+            $ref: '#/components/schemas/FileNode'
