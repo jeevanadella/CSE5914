@@ -51,14 +51,26 @@ paths:
           schema:
             type: string
             enum: [openalex, arxiv]
+        - in: query
+          name: page
+          schema:
+            type: integer
+            default: 1
+          description: "The page number to retrieve."
+        - in: query
+          name: perPage
+          schema:
+            type: integer
+            default: 10
+            maximum: 100
+          description: "The number of papers to retrieve per page."
       responses:
         '200':
-          description: A list of discovered papers.
+          description: A paginated list of discovered papers.
           content:
             application/json:
               schema:
-                type: array
-                items: { $ref: '#/components/schemas/DiscoveredPaper' }
+                $ref: '#/components/schemas/PaginatedDiscoveredPapers'
 
   /papers/import:
     post:
@@ -139,6 +151,7 @@ paths:
           application/json:
             schema:
               type: object
+              required: [repositoryUrl]
               properties:
                 repositoryUrl:
                   type: string
@@ -276,20 +289,26 @@ paths:
           name: filePath
           schema: { type: string }
           description: "Optional: Specify a file path to get its commit history."
+        - in: query
+          name: page
+          schema:
+            type: integer
+            default: 1
+          description: "The page number to retrieve."
+        - in: query
+          name: perPage
+          schema:
+            type: integer
+            default: 10
+            maximum: 100
+          description: "The number of commits to retrieve per page."
       responses:
         '200':
-          description: A list of commits.
+          description: A paginated list of commits.
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  type: object
-                  properties:
-                    sha: { type: string }
-                    message: { type: string }
-                    author: { type: string }
-                    date: { type: string, format: date-time }
+                $ref: '#/components/schemas/PaginatedCommits'
 
   /papers/{paperId}/code/metrics:
     get:
@@ -543,9 +562,11 @@ components:
         repositoryUrl:
           type: string
           format: uri
+          description: "The URL of the linked GitHub repository."
         isLinked:
           type: boolean
           default: false
+          description: "Indicates if a repository is linked and has been synchronized."
 
     Codebase:
       allOf:
@@ -556,9 +577,11 @@ components:
               type: array
               items:
                 $ref: '#/components/schemas/FileNode'
+              description: "The hierarchical file structure of the repository."
             lastSyncedAt:
               type: string
               format: date-time
+              description: "The timestamp of the last successful synchronization."
 
     FileNode:
       type: object
@@ -570,3 +593,33 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/FileNode'
+    
+    Commit:
+      type: object
+      properties:
+        sha: { type: string }
+        message: { type: string }
+        author: { type: string }
+        date: { type: string, format: date-time }
+
+    PaginatedCommits:
+      type: object
+      properties:
+        totalItems: { type: integer }
+        totalPages: { type: integer }
+        currentPage: { type: integer }
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Commit'
+
+    PaginatedDiscoveredPapers:
+      type: object
+      properties:
+        totalItems: { type: integer }
+        totalPages: { type: integer }
+        currentPage: { type: integer }
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/DiscoveredPaper'
