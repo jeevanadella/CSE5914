@@ -19,6 +19,8 @@ tags:
     description: Perform RAG-based Q&A on papers and code.
   - name: Code
     description: Manage codebases linked to papers.
+  - name: History
+    description: Minimal chat sessions and messages (CRUD-lite).
 
 paths:
   /health:
@@ -528,6 +530,148 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/QAResponse' }
 
+  /chat/sessions:
+    post:
+      tags: [History]
+      summary: Create a chat session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                userId: { type: string }
+                title: { type: string, example: "Paper comparison chat" }
+                context:
+                  type: object
+                  properties:
+                    paperIds:
+                      type: array
+                      items: { type: string }
+      responses:
+        '201':
+          description: Session created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChatSession' }
+
+    get:
+      tags: [History]
+      summary: List sessions (by user)
+      parameters:
+        - in: query
+          name: userId
+          required: true
+          schema: { type: string }
+        - in: query
+          name: page
+          schema: { type: integer, default: 1 }
+        - in: query
+          name: perPage
+          schema: { type: integer, default: 20, maximum: 100 }
+      responses:
+        '200':
+          description: Paginated sessions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  totalItems: { type: integer }
+                  totalPages: { type: integer }
+                  currentPage: { type: integer }
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/ChatSession' }
+
+  /chat/sessions/{sessionId}:
+    get:
+      tags: [History]
+      summary: Get a session
+      parameters:
+        - in: path
+          name: sessionId
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Session
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChatSession' }
+
+    delete:
+      tags: [History]
+      summary: Delete a session (and its messages)
+      parameters:
+        - in: path
+          name: sessionId
+          required: true
+          schema: { type: string }
+      responses:
+        '204':
+          description: Deleted
+
+  /chat/sessions/{sessionId}/messages:
+    get:
+      tags: [History]
+      summary: List messages in a session
+      parameters:
+        - in: path
+          name: sessionId
+          required: true
+          schema: { type: string }
+        - in: query
+          name: page
+          schema: { type: integer, default: 1 }
+        - in: query
+          name: perPage
+          schema: { type: integer, default: 50, maximum: 200 }
+        - in: query
+          name: order
+          schema: { type: string, enum: [asc, desc], default: asc }
+      responses:
+        '200':
+          description: Messages
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  totalItems: { type: integer }
+                  totalPages: { type: integer }
+                  currentPage: { type: integer }
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/ChatMessage' }
+
+    post:
+      tags: [History]
+      summary: Append a message to a session
+      description: Adds a user or assistant message. (Use /chat/qa separately to generate answers.)
+      parameters:
+        - in: path
+          name: sessionId
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role, content]
+              properties:
+                role: { type: string, enum: [user, assistant] }
+                content: { type: string }
+      responses:
+        '201':
+          description: Message created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChatMessage' }
+
   /papers/compare:
     post:
       tags: [Papers]
@@ -790,3 +934,28 @@ components:
                   properties:
                     paperId: { type: string }
                     value: { type: string }
+
+    ChatSession:
+      type: object
+      properties:
+        id: { type: string }
+        userId: { type: string }
+        title: { type: string }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        messageCount: { type: integer }
+        context:
+          type: object
+          properties:
+            paperIds:
+              type: array
+              items: { type: string }
+
+    ChatMessage:
+      type: object
+      properties:
+        id: { type: string }
+        sessionId: { type: string }
+        role: { type: string, enum: [user, assistant] }
+        content: { type: string }
+        createdAt: { type: string, format: date-time }
