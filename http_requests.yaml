@@ -528,6 +528,108 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/QAResponse' }
 
+  /papers/compare:
+    post:
+      tags: [Papers]
+      summary: Compare multiple papers on specific dimensions
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                paperIds:
+                  type: array
+                  items: { type: string }
+                  example: [paper123, paper456]
+                dimensions:
+                  type: array
+                  items:
+                    type: string
+                    enum: [algorithms, datasets, metrics, results]
+                  example: [algorithms, datasets]
+      responses:
+        '200':
+          description: Structured comparison result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ComparisonResult'
+
+  /papers/compare/{comparisonId}/summary:
+    get:
+      tags: [Papers]
+      summary: Get a summary of a comparison
+      parameters:
+        - in: path
+          name: comparisonId
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Comparison summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QAResponse'
+
+  /papers/align:
+    get:
+      tags: [Papers]
+      summary: Align sections across multiple papers
+      parameters:
+        - in: query
+          name: paperIds
+          required: true
+          schema:
+            type: array
+            items: { type: string }
+          style: form
+          explode: false
+          example: [paper123, paper456]
+        - in: query
+          name: sections
+          required: true
+          schema:
+            type: array
+            items: { type: string }
+          example: [methods, results]
+      responses:
+        '200':
+          description: Side-by-side aligned sections
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PaperCitation'
+
+  /papers/questions:
+    post:
+      tags: [Papers]
+      summary: Ask questions across multiple papers
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                question: { type: string, example: "Which paper achieved the best accuracy on CIFAR-10?" }
+                paperIds:
+                  type: array
+                  items: { type: string }
+                  example: [paper123, paper456]
+                includeCode: { type: boolean, example: true }
+      responses:
+        '200':
+          description: Answer with supporting citations
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QAResponse'
+
 components:
   schemas:
     DiscoveredPaper:
@@ -668,3 +770,23 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/DiscoveredPaper'
+
+    ComparisonResult:
+      type: object
+      properties:
+        comparisonId: { type: string, description: "Unique identifier for the comparison session" }
+        table:
+          type: array
+          description: "Structured comparison table across papers"
+          items:
+            type: object
+            properties:
+              dimension: { type: string, description: "The comparison dimension (e.g., algorithms, datasets, metrics, results)" }
+              values:
+                type: array
+                description: "Values for each paper under this dimension"
+                items:
+                  type: object
+                  properties:
+                    paperId: { type: string }
+                    value: { type: string }
