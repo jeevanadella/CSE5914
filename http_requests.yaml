@@ -39,7 +39,7 @@ paths:
     get:
       tags: [Discovery]
       summary: Search external sources for papers
-      description: Queries external APIs like OpenAlex and arXiv to find papers not yet in the system.
+      description: Queries external APIs like OpenAlex and arXiv to find papers not yet in the system. Supports both keyword and semantic search.
       parameters:
         - in: query
           name: q
@@ -51,6 +51,13 @@ paths:
           schema:
             type: string
             enum: [openalex, arxiv]
+        - in: query
+          name: searchType
+          schema:
+            type: string
+            enum: [keyword, semantic, hybrid]
+            default: hybrid
+          description: "Type of search - keyword (exact match), semantic (meaning-based), or hybrid (both)"
         - in: query
           name: page
           schema:
@@ -64,13 +71,43 @@ paths:
             default: 10
             maximum: 100
           description: "The number of papers to retrieve per page."
+        - in: query
+          name: expandQuery
+          schema:
+            type: boolean
+            default: true
+          description: "Whether to expand the query with related terms and synonyms"
+        - in: query
+          name: minYear
+          schema: { type: integer }
+          description: "Filter by minimum publication year"
+        - in: query
+          name: maxYear
+          schema: { type: integer }
+          description: "Filter by maximum publication year"
+        - in: query
+          name: minCitations
+          schema: { type: integer }
+          description: "Filter by minimum citation count"
       responses:
         '200':
-          description: A paginated list of discovered papers.
+          description: A paginated list of discovered papers with enhanced search metadata.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PaginatedDiscoveredPapers'
+                allOf:
+                  - $ref: '#/components/schemas/PaginatedDiscoveredPapers'
+                  - type: object
+                    properties:
+                      searchType:
+                        type: string
+                        description: "The type of search performed"
+                      expandedQuery:
+                        type: string
+                        description: "The expanded query after processing (if expandQuery=true)"
+                      explanation:
+                        type: string
+                        description: "Explanation of search strategy and results"
 
   /papers/import:
     post:
@@ -502,6 +539,14 @@ components:
         authors: { type: array, items: { type: string } }
         year: { type: integer }
         abstract: { type: string }
+        relevanceScore:
+          type: number
+          format: float
+          description: "Semantic relevance score (0-1) for semantic search results"
+        matchType:
+          type: string
+          enum: [keyword, semantic, both]
+          description: "How this result matched the query"
 
     Paper:
       type: object
