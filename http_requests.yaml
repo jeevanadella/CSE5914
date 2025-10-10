@@ -16,9 +16,11 @@ tags:
   - name: Users
     description: Manage users who curate papers and run analysis.
   - name: Chat
-    description: Perform RAG-based Q&A on papers and code.
+    description: Perform RAG-based Q&A on papers and code (specialized operations included).
   - name: Code
     description: Manage codebases linked to papers.
+  - name: History
+    description: Minimal chat sessions and messages (CRUD-lite).
 
 paths:
   /health:
@@ -39,7 +41,7 @@ paths:
     get:
       tags: [Discovery]
       summary: Search external sources for papers
-      description: Queries external APIs like OpenAlex and arXiv to find papers not yet in the system.
+      description: Queries external APIs like OpenAlex and arXiv to find papers not yet in the system. Supports both keyword and semantic search.
       parameters:
         - in: query
           name: q
@@ -51,6 +53,13 @@ paths:
           schema:
             type: string
             enum: [openalex, arxiv]
+        - in: query
+          name: searchType
+          schema:
+            type: string
+            enum: [keyword, semantic, hybrid]
+            default: hybrid
+          description: "Type of search - keyword (exact match), semantic (meaning-based), or hybrid (both)"
         - in: query
           name: page
           schema:
@@ -64,13 +73,43 @@ paths:
             default: 10
             maximum: 100
           description: "The number of papers to retrieve per page."
+        - in: query
+          name: expandQuery
+          schema:
+            type: boolean
+            default: true
+          description: "Whether to expand the query with related terms and synonyms"
+        - in: query
+          name: minYear
+          schema: { type: integer }
+          description: "Filter by minimum publication year"
+        - in: query
+          name: maxYear
+          schema: { type: integer }
+          description: "Filter by maximum publication year"
+        - in: query
+          name: minCitations
+          schema: { type: integer }
+          description: "Filter by minimum citation count"
       responses:
         '200':
-          description: A paginated list of discovered papers.
+          description: A paginated list of discovered papers with enhanced search metadata.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PaginatedDiscoveredPapers'
+                allOf:
+                  - $ref: '#/components/schemas/PaginatedDiscoveredPapers'
+                  - type: object
+                    properties:
+                      searchType:
+                        type: string
+                        description: "The type of search performed"
+                      expandedQuery:
+                        type: string
+                        description: "The expanded query after processing (if expandQuery=true)"
+                      explanation:
+                        type: string
+                        description: "Explanation of search strategy and results"
 
   /papers/import:
     post:
@@ -461,10 +500,14 @@ paths:
         '200':
           description: User's paper list updated.
 
+  # ---------------------------
+  # Chat (specialized operations)
+  # ---------------------------
+
   /chat/qa:
     post:
       tags: [Chat]
-      summary: Chat over papers and code
+      summary: Chat over papers and code (general Q&A)
       description: Performs RAG Q&A, optionally scoped to a specific user's selected papers.
       requestBody:
         required: true
@@ -480,16 +523,409 @@ paths:
                 userId:
                   type: string
                   description: "Optional: Scope the chat to a specific user's papers."
+                paperIds:
+                  type: array
+                  description: "Optionally restrict retrieval to these paper IDs."
+                  items: { type: string }
                 searchCode:
                   type: boolean
                   description: "If true, also search linked codebases."
                   default: false
+                maxContexts:
+                  type: integer
+                  default: 8
+                  description: "Max retrieved chunks used for grounding."
       responses:
         '200':
           description: Answer with citations.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/QAResponse' }
+
+  /chat/summarize:
+    post:
+      tags: [Chat]
+      summary: Summarize one or many papers
+      description: Produce hierarchical or bullet summaries at configurable granularity.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [paperIds]
+              properties:
+                paperIds:
+                  type: array
+                  items: { type: string }
+                  example: [paper123, paper456]
+                focus:
+                  type: string
+                  enum: [abstract, intro, methods, results, conclusion, full]
+                  default: full
+                style:
+                  type: string
+                  enum: [bullets, narrative, tl;dr]
+                  default: bullets
+                length:
+                  type: string
+                  enum: [short, medium, long]
+                  default: medium
+                includeCitations:
+                  type: boolean
+                  default: true
+      responses:
+        '200':
+          description: Summaries with optional citations
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        paperId: { type: string }
+                        summary: { type: string }
+                        citations:
+                          type: array
+                          items: { $ref: '#/components/schemas/PaperCitation' }
+
+  /chat/outline:
+    post:
+      tags: [Chat]
+      summary: Generate structured outlines
+      description: Returns a section/subsection outline for study notes, slides, or lectures based on given papers.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                paperIds:
+                  type: array
+                  items: { type: string }
+                depth:
+                  type: integer
+                  default: 2
+                  description: "Heading depth (1-3)."
+                audience:
+                  type: string
+                  example: "graduate ML course"
+      responses:
+        '200':
+          description: Outline
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  outline:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        heading: { type: string }
+                        level: { type: integer }
+                        children:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              heading: { type: string }
+                              level: { type: integer }
+
+  /chat/extract:
+    post:
+      tags: [Chat]
+      summary: Schema-guided information extraction
+      description: Extract structured facts (datasets, metrics, hyperparams, claims) using a JSON schema.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [paperIds, schema]
+              properties:
+                paperIds:
+                  type: array
+                  items: { type: string }
+                schema:
+                  type: object
+                  description: "JSON Schema for expected output."
+                  example:
+                    type: object
+                    properties:
+                      datasets: { type: array, items: { type: string } }
+                      metrics: { type: array, items: { type: string } }
+                      bestResult:
+                        type: object
+                        properties:
+                          dataset: { type: string }
+                          value: { type: number }
+                includeCode:
+                  type: boolean
+                  default: false
+      responses:
+        '200':
+          description: Extracted structured data with citations
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                  citations:
+                    type: array
+                    items: { $ref: '#/components/schemas/PaperCitation' }
+
+  /chat/citations:
+    post:
+      tags: [Chat]
+      summary: Generate formatted citations
+      description: Return a bibliography for given papers in a target format (e.g., BibTeX, APA).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [paperIds, format]
+              properties:
+                paperIds:
+                  type: array
+                  items: { type: string }
+                format:
+                  type: string
+                  enum: [bibtex, apa, mla, chicago]
+                  example: bibtex
+      responses:
+        '200':
+          description: Formatted citations
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  entries:
+                    type: array
+                    items:
+                      type: string
+                      example: |
+                        @inproceedings{smith2021awesome,
+                          title={Awesome Paper}, author={Smith, J. and Doe, A.}, year={2021}, booktitle={NeurIPS}
+                        }
+
+  /chat/code-qa:
+    post:
+      tags: [Chat]
+      summary: Code-aware Q&A
+      description: Answer questions requiring both paper context and linked repository reasoning (cross-references included).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [question]
+              properties:
+                question:
+                  type: string
+                  example: "How is label smoothing implemented compared to the method section?"
+                paperId:
+                  type: string
+                repoPaths:
+                  type: array
+                  items: { type: string }
+                  description: "Optional file path filters within the linked repo."
+                maxSnippets:
+                  type: integer
+                  default: 6
+      responses:
+        '200':
+          description: Answer with paper and code citations
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QAResponse' }
+  /chat/compare:
+    post:
+      tags: [Chat]
+      summary: General cross-paper comparison (narrative)
+      description: Compares papers across all major dimensions (methods, datasets, metrics/results, code/implementation, compute, limitations, novelty, etc.) and returns a narrative synthesis with citations.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [paperIds]
+              properties:
+                paperIds:
+                  type: array
+                  items: { type: string }
+                  example: [paper123, paper456, paper789]
+                includeCode:
+                  type: boolean
+                  description: "Also contrast linked codebases where available."
+                  default: true
+                includeCitations:
+                  type: boolean
+                  description: "Include supporting citations for claims."
+                  default: true
+      responses:
+        '200':
+          description: Narrative comparison with citations
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QAResponse'
+  
+  /chat/sessions:
+    post:
+      tags: [History]
+      summary: Create a chat session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                userId: { type: string }
+                title: { type: string, example: "Paper comparison chat" }
+                context:
+                  type: object
+                  properties:
+                    paperIds:
+                      type: array
+                      items: { type: string }
+      responses:
+        '201':
+          description: Session created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChatSession' }
+
+    get:
+      tags: [History]
+      summary: List sessions (by user)
+      parameters:
+        - in: query
+          name: userId
+          required: true
+          schema: { type: string }
+        - in: query
+          name: page
+          schema: { type: integer, default: 1 }
+        - in: query
+          name: perPage
+          schema: { type: integer, default: 20, maximum: 100 }
+      responses:
+        '200':
+          description: Paginated sessions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  totalItems: { type: integer }
+                  totalPages: { type: integer }
+                  currentPage: { type: integer }
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/ChatSession' }
+
+  /chat/sessions/{sessionId}:
+    get:
+      tags: [History]
+      summary: Get a session
+      parameters:
+        - in: path
+          name: sessionId
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Session
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChatSession' }
+
+    delete:
+      tags: [History]
+      summary: Delete a session (and its messages)
+      parameters:
+        - in: path
+          name: sessionId
+          required: true
+          schema: { type: string }
+      responses:
+        '204':
+          description: Deleted
+
+  /chat/sessions/{sessionId}/messages:
+    get:
+      tags: [History]
+      summary: List messages in a session
+      parameters:
+        - in: path
+          name: sessionId
+          required: true
+          schema: { type: string }
+        - in: query
+          name: page
+          schema: { type: integer, default: 1 }
+        - in: query
+          name: perPage
+          schema: { type: integer, default: 50, maximum: 200 }
+        - in: query
+          name: order
+          schema: { type: string, enum: [asc, desc], default: asc }
+      responses:
+        '200':
+          description: Messages
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  totalItems: { type: integer }
+                  totalPages: { type: integer }
+                  currentPage: { type: integer }
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/ChatMessage' }
+
+    post:
+      tags: [History]
+      summary: Append a message to a session
+      description: Adds a user or assistant message. (Use /chat/qa separately to generate answers.)
+      parameters:
+        - in: path
+          name: sessionId
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role, content]
+              properties:
+                role: { type: string, enum: [user, assistant] }
+                content: { type: string }
+      responses:
+        '201':
+          description: Message created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChatMessage' }
 
 components:
   schemas:
@@ -502,6 +938,14 @@ components:
         authors: { type: array, items: { type: string } }
         year: { type: integer }
         abstract: { type: string }
+        relevanceScore:
+          type: number
+          format: float
+          description: "Semantic relevance score (0-1) for semantic search results"
+        matchType:
+          type: string
+          enum: [keyword, semantic, both]
+          description: "How this result matched the query"
 
     Paper:
       type: object
@@ -623,3 +1067,48 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/DiscoveredPaper'
+
+    ComparisonResult:
+      type: object
+      properties:
+        comparisonId: { type: string, description: "Unique identifier for the comparison session" }
+        table:
+          type: array
+          description: "Structured comparison table across papers"
+          items:
+            type: object
+            properties:
+              dimension: { type: string, description: "The comparison dimension (e.g., algorithms, datasets, metrics, results)" }
+              values:
+                type: array
+                description: "Values for each paper under this dimension"
+                items:
+                  type: object
+                  properties:
+                    paperId: { type: string }
+                    value: { type: string }
+
+    ChatSession:
+      type: object
+      properties:
+        id: { type: string }
+        userId: { type: string }
+        title: { type: string }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        messageCount: { type: integer }
+        context:
+          type: object
+          properties:
+            paperIds:
+              type: array
+              items: { type: string }
+
+    ChatMessage:
+      type: object
+      properties:
+        id: { type: string }
+        sessionId: { type: string }
+        role: { type: string, enum: [user, assistant] }
+        content: { type: string }
+        createdAt: { type: string, format: date-time }
